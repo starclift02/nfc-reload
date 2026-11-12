@@ -3,23 +3,140 @@ on:
   push:
     branches: [ "main", "master" ]
   workflow_dispatch:
+
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
       - name: Set up JDK 17
         uses: actions/setup-java@v4
         with:
           java-version: '17'
           distribution: 'temurin'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Generate Project Files & Build APK
+        run: |
+          mkdir -p app/src/main/java/fr/mdm/nfcreload
+
+          cat << 'EOF' > settings.gradle
+          pluginManagement {
+              repositories {
+                  google()
+                  mavenCentral()
+                  gradlePluginPortal()
+              }
+          }
+          dependencyResolutionManagement {
+              repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+              repositories {
+                  google()
+                  mavenCentral()
+              }
+          }
+          rootProject.name = "NFCReload"
+          include ':app'
+          EOF
+
+          cat << 'EOF' > build.gradle
+          plugins {
+              id 'com.android.application' version '8.2.2' apply false
+          }
+          EOF
+
+          cat << 'EOF' > app/build.gradle
+          plugins {
+              id 'com.android.application'
+          }
+          android {
+              namespace 'fr.mdm.nfcreload'
+              compileSdk 34
+              defaultConfig {
+                  applicationId "fr.mdm.nfcreload"
+                  minSdk 24
+                  targetSdk 34
+                  versionCode 1
+                  versionName "1.0"
+              }
+              buildTypes {
+                  release {
+                      minifyEnabled false
+                      signingConfig signingConfigs.debug
+                  }
+              }
+              compileOptions {
+                  sourceCompatibility JavaVersion.VERSION_17
+                  targetCompatibility JavaVersion.VERSION_17
+              }
+          }
+          EOF
+
+          cat << 'EOF' > app/src/main/AndroidManifest.xml
+          <?xml version="1.0" encoding="utf-8"?>
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+              <application
+                  android:label="Relancer NFC"
+                  android:icon="@android:drawable/stat_sys_data_bluetooth"
+                  android:theme="@android:style/Theme.NoDisplay">
+                  <activity
+                      android:name=".MainActivity"
+                      android:exported="true"
+                      android:excludeFromRecents="true"
+                      android:noHistory="true">
+                      <intent-filter>
+                          <action android:name="android.intent.action.MAIN" />
+                          <category android:name="android.intent.category.LAUNCHER" />
+                      </intent-filter>
+                  </activity>
+              </application>
+          </manifest>
+          EOF
+
+          cat << 'EOF' > app/src/main/java/fr/mdm/nfcreload/MainActivity.java
+          package fr.mdm.nfcreload;
+          import android.app.Activity;
+          import android.content.Intent;
+          import android.os.Build;
+          import android.os.Bundle;
+          import android.provider.Settings;
+          public class MainActivity extends Activity {
+              @Override
+              protected void onCreate(Bundle savedInstanceState) {
+                  super.onCreate(savedInstanceState);
+                  try {
+                      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                          Intent panelIntent = new Intent("android.settings.panel.action.NFC");
+                          panelIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK);
+                          startActivity(panelIntent);
+                      } else {
+                          Intent nfcIntent = new Intent(Settings.ACTION_NFC_SETTINGS);
+                          nfcIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK);
+                          startActivity(nfcIntent);
+                      }
+                  } catch (Exception e) {
+                      try {
+                          Intent fallbackIntent = new Intent(Settings.ACTION_NFC_SETTINGS);
+                          fallbackIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK);
+                          startActivity(fallbackIntent);
+                      } catch (Exception ignored) {}
+                  }
+                  finish();
+              }
+          }
+          EOF
+
+          yes | sdkmanager --licenses > /dev/null 2>&1 || true
+
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v3
         with:
           gradle-version: '8.5'
-      - name: Build Release APK
+
+      - name: Build APK
         run: gradle assembleRelease --no-daemon
+
       - name: Upload APK Ready for Headwind MDM
         uses: actions/upload-artifact@v4
         with:
